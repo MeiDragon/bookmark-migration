@@ -9,23 +9,22 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
-import { execSync } from 'child_process';
 
 // ── 浏览器书签路径 ───────────────────────────────────────────
 const MACOS_PATHS = {
-  chrome:  '~/Library/Application Support/Google/Chrome/Default/Bookmarks',
-  edge:    '~/Library/Application Support/Microsoft Edge/Default/Bookmarks',
-  tabbit:  '~/Library/Application Support/Tabbit/Default/Bookmarks',
-  arc:     '~/Library/Application Support/Arc/User Data/Default/Bookmarks',
-  brave:   '~/Library/Application Support/BraveSoftware/Brave-Browser/Default/Bookmarks',
+  chrome:  '~/Library/Application Support/Google/Chrome',
+  edge:    '~/Library/Application Support/Microsoft Edge',
+  tabbit:  '~/Library/Application Support/Tabbit',
+  arc:     '~/Library/Application Support/Arc/User Data',
+  brave:   '~/Library/Application Support/BraveSoftware/Brave-Browser',
   firefox: '~/Library/Application Support/Firefox/Profiles',
   safari:  '~/Library/Safari/Bookmarks.plist',
 };
 
 const WIN_PATHS = {
-  chrome:  '%LOCALAPPDATA%/Google/Chrome/User Data/Default/Bookmarks',
-  edge:    '%LOCALAPPDATA%/Microsoft/Edge/User Data/Default/Bookmarks',
-  brave:   '%LOCALAPPDATA%/BraveSoftware/Brave-Browser/User Data/Default/Bookmarks',
+  chrome:  '%LOCALAPPDATA%/Google/Chrome/User Data',
+  edge:    '%LOCALAPPDATA%/Microsoft/Edge/User Data',
+  brave:   '%LOCALAPPDATA%/BraveSoftware/Brave-Browser/User Data',
   firefox: '%APPDATA%/Mozilla/Firefox/Profiles',
 };
 
@@ -33,7 +32,23 @@ function expandHome(p) {
   return p.replace(/^~/, os.homedir());
 }
 
-function getBookmarksPath(browser) {
+function listProfiles(baseDir) {
+  const profiles = [];
+  if (!fs.existsSync(baseDir)) return profiles;
+  for (const item of fs.readdirSync(baseDir)) {
+    const full = path.join(baseDir, item);
+    let stat;
+    try { stat = fs.statSync(full); } catch { continue; }
+    if (!stat.isDirectory()) continue;
+    const bookmarksPath = path.join(full, 'Bookmarks');
+    if (fs.existsSync(bookmarksPath)) {
+      profiles.push({ name: item, path: bookmarksPath });
+    }
+  }
+  return profiles;
+}
+
+function getBrowserBaseDir(browser) {
   const platform = os.platform();
   const name = browser.toLowerCase();
   let raw;
@@ -52,25 +67,68 @@ function getBookmarksPath(browser) {
     return null;
   }
 
-  let resolved = expandHome(raw);
+  return expandHome(raw);
+}
 
-  // Firefox 需要找 profile 目录
+function getBookmarksPath(browser, profileName = null) {
+  const name = browser.toLowerCase();
+  const resolved = getBrowserBaseDir(browser);
+  if (!resolved) return null;
+
   if (name === 'firefox') {
     const profileDir = findFirefoxProfile(resolved);
     return profileDir ? path.join(profileDir, 'places.sqlite') : null;
   }
-
   if (name === 'safari') {
     return fs.existsSync(resolved) ? resolved : null;
   }
 
-  resolved = path.resolve(resolved);
-  if (!fs.existsSync(resolved)) {
+  if (profileName) {
+    const profilePath = path.join(resolved, profileName, 'Bookmarks');
+    if (fs.existsSync(profilePath)) return profilePath;
+    console.error(`❌ 未找到 profile '${profileName}' 的书签文件`);
+    return null;
+  }
+
+  const defaultPath = path.join(resolved, 'Default', 'Bookmarks');
+  if (fs.existsSync(defaultPath)) return defaultPath;
+
+  const profiles = listProfiles(resolved);
+  if (profiles.length === 0) {
     console.error(`❌ 书签文件不存在: ${resolved}`);
     console.error('   请确认浏览器已安装并运行过至少一次');
     return null;
   }
-  return resolved;
+
+  if (profiles.length === 1) {
+    return profiles[0].path;
+  }
+
+  console.error(`❌ 发现多个 ${browser} profile，请用 --profile 指定：`);
+  for (const p of profiles) {
+    console.error(`   --profile "${p.name}"  →  ${p.path}`);
+  }
+  return null;
+}
+
+function getAllBookmarksPaths(browser) {
+  const name = browser.toLowerCase();
+  const resolved = getBrowserBaseDir(browser);
+  if (!resolved) return [];
+
+  if (name === 'firefox' || name === 'safari') {
+    const p = getBookmarksPath(browser);
+    return p ? [{ name: name === 'safari' ? 'Safari' : 'Default', path: p }] : [];
+  }
+
+  const profiles = listProfiles(resolved);
+  if (profiles.length === 0) {
+    const defaultPath = path.join(resolved, 'Default', 'Bookmarks');
+    if (fs.existsSync(defaultPath)) {
+      return [{ name: 'Default', path: defaultPath }];
+    }
+  }
+  return profiles;
 }
 
 function findFirefoxProfile(basePath) {
@@ -88,16 +146,6 @@ function findFirefoxProfile(basePath) {
 // ── 加载书签 ────────────────────────────────────────────────
 function loadChromiumBookmarks(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-}
-
-function loadFirefoxBookmarks(filePath) {
-  console.warn('⚠️ Firefox 书签迁移需要额外处理，当前版本暂不支持写入');
-  return null;
-}
-
-function loadSafariBookmarks(filePath) {
-  console.warn('⚠️ Safari 书签迁移需要额外处理，当前版本暂不支持写入');
-  return null;
 }
 
 // ── 树操作 ──────────────────────────────────────────────────
@@ -155,7 +203,6 @@ function remapIds(node, idCounter) {
 
 function calculateChecksum(data) {
   const content = JSON.stringify(data.roots, (k, v) => {
-    // 保持和 Python 一致：按 key 排序
     if (v && typeof v === 'object' && !Array.isArray(v)) {
       return Object.keys(v).sort().reduce((acc, key) => {
         acc[key] = v[key];
@@ -181,39 +228,119 @@ function listAllFolders(node, folderPath = '') {
 }
 
 // ── 列出收藏夹 ──────────────────────────────────────────────
-function listFolders(sourceBrowser) {
-  const sourcePath = getBookmarksPath(sourceBrowser);
-  if (!sourcePath) return false;
+function listFolders(sourceBrowser, profileName = null) {
+  if (profileName) {
+    const sourcePath = getBookmarksPath(sourceBrowser, profileName);
+    if (!sourcePath) return false;
 
-  const data = loadChromiumBookmarks(sourcePath);
-  console.log(`\n📂 ${sourceBrowser.toUpperCase()} 的所有收藏夹:\n`);
+    const data = loadChromiumBookmarks(sourcePath);
+    console.log(`\n📂 ${sourceBrowser.toUpperCase()} (${profileName}) 的所有收藏夹:\n`);
 
-  const allFolders = [];
-  for (const [rootName, rootNode] of Object.entries(data.roots || {})) {
-    if (rootNode && typeof rootNode === 'object') {
-      allFolders.push(...listAllFolders(rootNode));
+    const allFolders = [];
+    for (const [rootName, rootNode] of Object.entries(data.roots || {})) {
+      if (rootNode && typeof rootNode === 'object') {
+        allFolders.push(...listAllFolders(rootNode));
+      }
     }
-  }
 
-  if (!allFolders.length) {
-    console.log('  (没有收藏夹)');
+    if (!allFolders.length) {
+      console.log('  (没有收藏夹)');
+      return true;
+    }
+
+    for (const { path: fp, count } of allFolders.sort((a, b) => a.path.localeCompare(b.path))) {
+      const depth = fp.split('/').length - 1;
+      const indent = '  '.repeat(depth);
+      const name = fp.split('/').pop();
+      console.log(`${indent}📁 ${name} (${count} 个书签)`);
+    }
+
+    console.log(`\n总计: ${allFolders.length} 个收藏夹`);
     return true;
   }
 
-  for (const { path: fp, count } of allFolders.sort((a, b) => a.path.localeCompare(b.path))) {
-    const depth = fp.split('/').length - 1;
-    const indent = '  '.repeat(depth);
-    const name = fp.split('/').pop();
-    console.log(`${indent}📁 ${name} (${count} 个书签)`);
+  // 未指定 profile：遍历所有账户
+  const allProfiles = getAllBookmarksPaths(sourceBrowser);
+  if (!allProfiles.length) {
+    console.error(`❌ 未找到 ${sourceBrowser} 的书签文件`);
+    return false;
   }
 
-  console.log(`\n总计: ${allFolders.length} 个收藏夹`);
+  let totalFolders = 0;
+  for (const { name: pName, path: pPath } of allProfiles) {
+    const data = loadChromiumBookmarks(pPath);
+    console.log(`\n📂 ${sourceBrowser.toUpperCase()} (${pName}) 的所有收藏夹:\n`);
+
+    const allFolders = [];
+    for (const [rootName, rootNode] of Object.entries(data.roots || {})) {
+      if (rootNode && typeof rootNode === 'object') {
+        allFolders.push(...listAllFolders(rootNode));
+      }
+    }
+
+    if (!allFolders.length) {
+      console.log('  (没有收藏夹)');
+      continue;
+    }
+
+    for (const { path: fp, count } of allFolders.sort((a, b) => a.path.localeCompare(b.path))) {
+      const depth = fp.split('/').length - 1;
+      const indent = '  '.repeat(depth);
+      const name = fp.split('/').pop();
+      console.log(`${indent}📁 ${name} (${count} 个书签)`);
+    }
+
+    totalFolders += allFolders.length;
+  }
+
+  console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+  console.log(`总计: ${allProfiles.length} 个账户, ${totalFolders} 个收藏夹`);
   return true;
 }
 
 // ── 主迁移逻辑 ──────────────────────────────────────────────
-function migrateBookmarks({ source, target, folder, keyword, dryRun }) {
-  const sourcePath = getBookmarksPath(source);
+function migrateBookmarks({ source, target, folder, keyword, dryRun, profile }) {
+  let sourcePath = getBookmarksPath(source, profile);
+  let sourceData = null;
+  let foundProfile = profile;
+
+  // 如果指定了 profile 但未找到，或没指定 profile 但文件夹搜索需要跨账户
+  if (folder && !profile) {
+    // 先尝试 Default
+    if (sourcePath) {
+      sourceData = loadChromiumBookmarks(sourcePath);
+      for (const rootNode of Object.values(sourceData.roots || {})) {
+        if (rootNode && typeof rootNode === 'object') {
+          if (findFolder(rootNode, folder)) {
+            foundProfile = 'Default';
+            break;
+          }
+        }
+      }
+    }
+    // Default 没找到，遍历所有 profile
+    if (!foundProfile) {
+      const allProfiles = getAllBookmarksPaths(source);
+      for (const { name: pName, path: pPath } of allProfiles) {
+        const data = loadChromiumBookmarks(pPath);
+        for (const rootNode of Object.values(data.roots || {})) {
+          if (rootNode && typeof rootNode === 'object') {
+            if (findFolder(rootNode, folder)) {
+              sourcePath = pPath;
+              sourceData = data;
+              foundProfile = pName;
+              console.log(`🔍 在账户 ${pName} 中找到文件夹 '${folder}'`);
+              break;
+            }
+          }
+        }
+        if (foundProfile) break;
+      }
+    }
+  } else if (!sourceData && sourcePath) {
+    sourceData = loadChromiumBookmarks(sourcePath);
+  }
+
   const targetPath = getBookmarksPath(target);
 
   if (!sourcePath || !targetPath) return false;
@@ -221,26 +348,8 @@ function migrateBookmarks({ source, target, folder, keyword, dryRun }) {
   console.log(`📂 源: ${sourcePath}`);
   console.log(`📂 目标: ${targetPath}`);
 
-  // 加载源书签
-  let sourceData;
-  if (source === 'firefox') {
-    loadFirefoxBookmarks(sourcePath);
-    return false;
-  } else if (source === 'safari') {
-    loadSafariBookmarks(sourcePath);
-    return false;
-  } else {
-    sourceData = loadChromiumBookmarks(sourcePath);
-  }
-
-  // 加载目标书签
-  if (target === 'firefox' || target === 'safari') {
-    console.error('⚠️ 目标浏览器为 Firefox/Safari，暂不支持写入');
-    return false;
-  }
   const targetData = loadChromiumBookmarks(targetPath);
 
-  // 查找要迁移的内容
   let itemsToMigrate = [];
 
   if (folder) {
@@ -254,10 +363,14 @@ function migrateBookmarks({ source, target, folder, keyword, dryRun }) {
     if (!found) {
       console.error(`❌ 未找到文件夹 '${folder}'`);
       console.error('\n可用文件夹:');
-      for (const rootNode of Object.values(sourceData.roots || {})) {
-        if (rootNode && typeof rootNode === 'object') {
-          for (const { path: fp, count } of listAllFolders(rootNode)) {
-            console.error(`  📁 ${fp} (${count} 个书签)`);
+      const allProfiles = getAllBookmarksPaths(source);
+      for (const { name: pName, path: pPath } of allProfiles) {
+        const data = loadChromiumBookmarks(pPath);
+        for (const rootNode of Object.values(data.roots || {})) {
+          if (rootNode && typeof rootNode === 'object') {
+            for (const { path: fp, count } of listAllFolders(rootNode)) {
+              console.error(`  [${pName}] 📁 ${fp} (${count} 个书签)`);
+            }
           }
         }
       }
@@ -277,7 +390,6 @@ function migrateBookmarks({ source, target, folder, keyword, dryRun }) {
     }
     console.log(`✅ 找到 ${itemsToMigrate.length} 个匹配的书签`);
   } else {
-    // 全量迁移
     for (const rootNode of Object.values(sourceData.roots || {})) {
       if (rootNode && typeof rootNode === 'object' && rootNode.children) {
         itemsToMigrate.push(...rootNode.children);
@@ -286,7 +398,6 @@ function migrateBookmarks({ source, target, folder, keyword, dryRun }) {
     console.log(`✅ 全量迁移，共 ${itemsToMigrate.length} 个顶级项`);
   }
 
-  // 预览模式
   if (dryRun) {
     console.log('\n🔍 预览模式（不执行写入）:');
     for (const item of itemsToMigrate) {
@@ -299,13 +410,11 @@ function migrateBookmarks({ source, target, folder, keyword, dryRun }) {
     return true;
   }
 
-  // 备份
   const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
   const backupPath = `${targetPath}.bak_${timestamp}`;
   fs.copyFileSync(targetPath, backupPath);
   console.log(`\n💾 已备份目标书签到: ${backupPath}`);
 
-  // 执行迁移
   let maxId = 0;
   for (const rootNode of Object.values(targetData.roots || {})) {
     if (rootNode && typeof rootNode === 'object') {
@@ -325,7 +434,6 @@ function migrateBookmarks({ source, target, folder, keyword, dryRun }) {
     bookmarkBar.children.push(remapIds(item, idCounter));
   }
 
-  // 更新 checksum 并写入
   targetData.checksum = calculateChecksum(targetData);
   fs.writeFileSync(targetPath, JSON.stringify(targetData, null, 3), 'utf-8');
 
@@ -335,6 +443,29 @@ function migrateBookmarks({ source, target, folder, keyword, dryRun }) {
 }
 
 // ── CLI ─────────────────────────────────────────────────────
+function parseArgs(argv) {
+  const args = {};
+  for (let i = 2; i < argv.length; i++) {
+    const arg = argv[i];
+    switch (arg) {
+      case '-s': case '--source':  args.source  = argv[++i]; break;
+      case '-t': case '--target':  args.target  = argv[++i]; break;
+      case '-f': case '--folder':  args.folder  = argv[++i]; break;
+      case '-k': case '--keyword': args.keyword = argv[++i]; break;
+      case '-d': case '--dry-run': args.dryRun  = true; break;
+      case '-l': case '--list':    args.list    = true; break;
+      case '-p': case '--profile': args.profile = argv[++i]; break;
+      case '-h': case '--help':    args.help    = true; break;
+      default:
+        if (arg.startsWith('-')) {
+          console.error(`❌ 未知选项: ${arg}`);
+          process.exit(1);
+        }
+    }
+  }
+  return args;
+}
+
 function showHelp() {
   console.log(`
 浏览器收藏夹迁移工具 (Node.js)
@@ -345,6 +476,7 @@ function showHelp() {
 选项:
   -s, --source  <浏览器>   源浏览器 (chrome/edge/tabbit/arc/brave)
   -t, --target  <浏览器>   目标浏览器 (chrome/edge/tabbit/arc/brave)
+  -p, --profile <名称>     源浏览器 profile 名称 (如 Profile 2)
   -f, --folder  <名称>     指定要迁移的文件夹名称
   -k, --keyword <关键词>   按关键词过滤书签
   -d, --dry-run            预览模式，不实际写入
@@ -352,8 +484,14 @@ function showHelp() {
   -h, --help               显示帮助
 
 示例:
-  # 列出 Chrome 所有收藏夹
+  # 列出 Chrome Default profile 的收藏夹
   node migrate-bookmarks.mjs -s chrome -l
+
+  # 列出 Chrome Profile 2 的收藏夹
+  node migrate-bookmarks.mjs -s chrome -p "Profile 2" -l
+
+  # 从 Profile 2 迁移网抑云到 Tabbit
+  node migrate-bookmarks.mjs -s chrome -p "Profile 2" -t tabbit -f "网抑云"
 
   # 预览迁移
   node migrate-bookmarks.mjs -s chrome -t tabbit -f "Frontend-GItHubBlog" -d
@@ -369,28 +507,6 @@ function showHelp() {
 `);
 }
 
-function parseArgs(argv) {
-  const args = {};
-  for (let i = 2; i < argv.length; i++) {
-    const arg = argv[i];
-    switch (arg) {
-      case '-s': case '--source':  args.source  = argv[++i]; break;
-      case '-t': case '--target':  args.target  = argv[++i]; break;
-      case '-f': case '--folder':  args.folder  = argv[++i]; break;
-      case '-k': case '--keyword': args.keyword = argv[++i]; break;
-      case '-d': case '--dry-run': args.dryRun  = true; break;
-      case '-l': case '--list':    args.list    = true; break;
-      case '-h': case '--help':    args.help    = true; break;
-      default:
-        if (arg.startsWith('-')) {
-          console.error(`❌ 未知选项: ${arg}`);
-          process.exit(1);
-        }
-    }
-  }
-  return args;
-}
-
 function main() {
   const args = parseArgs(process.argv);
 
@@ -404,7 +520,7 @@ function main() {
       console.error('❌ 使用 --list 时需要指定 --source');
       process.exit(1);
     }
-    const ok = listFolders(args.source);
+    const ok = listFolders(args.source, args.profile);
     process.exit(ok ? 0 : 1);
   }
 
