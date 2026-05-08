@@ -28,26 +28,21 @@
 ### 1. 列出源浏览器的所有收藏夹
 
 ```bash
-python3 scripts/list_folders.py chrome
+node scripts/migrate-bookmarks.mjs -s chrome -l
 ```
 
 ### 2. 预览迁移内容
 
 ```bash
-python3 scripts/migrate_bookmarks.py \
-  --source chrome \
-  --target tabbit \
-  --folder "Frontend-GItHubBlog" \
-  --dry-run
+node scripts/migrate-bookmarks.mjs \
+  -s chrome -t tabbit -f "Frontend-GItHubBlog" -d
 ```
 
 ### 3. 执行迁移
 
 ```bash
-python3 scripts/migrate_bookmarks.py \
-  --source chrome \
-  --target tabbit \
-  --folder "Frontend-GItHubBlog"
+node scripts/migrate-bookmarks.mjs \
+  -s chrome -t tabbit -f "Frontend-GItHubBlog"
 ```
 
 ## 使用示例
@@ -55,36 +50,33 @@ python3 scripts/migrate_bookmarks.py \
 ### 场景一：全量迁移
 
 ```bash
-python3 scripts/migrate_bookmarks.py --source chrome --target edge
+node scripts/migrate-bookmarks.mjs -s chrome -t edge
 ```
 
 ### 场景二：指定文件夹迁移
 
 ```bash
-python3 scripts/migrate_bookmarks.py \
-  --source chrome \
-  --target tabbit \
-  --folder "前端开发"
+node scripts/migrate-bookmarks.mjs \
+  -s chrome -t tabbit -f "前端开发"
 ```
 
 ### 场景三：关键词过滤迁移
 
 ```bash
-python3 scripts/migrate_bookmarks.py \
-  --source chrome \
-  --target arc \
-  --keyword "github"
+node scripts/migrate-bookmarks.mjs \
+  -s chrome -t arc -k github
 ```
 
 ## 命令行参数
 
 ```
---source, -s    源浏览器名称 (chrome/edge/tabbit/arc/brave)
---target, -t    目标浏览器名称 (chrome/edge/tabbit/arc/brave)
---folder, -f    指定要迁移的文件夹名称
---keyword, -k   按关键词过滤书签
---dry-run, -d   预览模式，不实际写入
---list, -l      列出源浏览器的所有文件夹
+-s, --source  <浏览器>   源浏览器名称 (chrome/edge/tabbit/arc/brave)
+-t, --target  <浏览器>   目标浏览器名称 (chrome/edge/tabbit/arc/brave)
+-f, --folder  <名称>     指定要迁移的文件夹名称
+-k, --keyword <关键词>   按关键词过滤书签
+-d, --dry-run            预览模式，不实际写入
+-l, --list               列出源浏览器的所有文件夹
+-h, --help               显示帮助
 ```
 
 ## 注意事项
@@ -101,6 +93,5 @@ bookmark-migration/
 ├── SKILL.md                          # Skill 定义文件
 ├── README.md                         # 使用文档
 └── scripts/
-    ├── migrate_bookmarks.py          # 主迁移脚本
-    └── list_folders.py               # 列出收藏夹脚本
+    └── migrate-bookmarks.mjs         # 主迁移脚本（含列出收藏夹功能）
 ```

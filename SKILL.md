@@ -111,15 +111,15 @@ with open(bookmarks_path) as f:
 
 ```bash
 # 列出所有收藏夹
-python3 ~/.agents/skills/bookmark-migration/scripts/list_folders.py chrome
+node ~/.agents/skills/bookmark-migration/scripts/migrate-bookmarks.mjs -s chrome -l
 
 # 预览迁移
-python3 ~/.agents/skills/bookmark-migration/scripts/migrate_bookmarks.py \
-  --source chrome --target tabbit --folder "Frontend-GItHubBlog" --dry-run
+node ~/.agents/skills/bookmark-migration/scripts/migrate-bookmarks.mjs \
+  -s chrome -t tabbit -f "Frontend-GItHubBlog" -d
 
 # 执行迁移
-python3 ~/.agents/skills/bookmark-migration/scripts/migrate_bookmarks.py \
-  --source chrome --target tabbit --folder "Frontend-GItHubBlog"
+node ~/.agents/skills/bookmark-migration/scripts/migrate-bookmarks.mjs \
+  -s chrome -t tabbit -f "Frontend-GItHubBlog"
 ```
 
 ## 注意事项
